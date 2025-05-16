@@ -108,6 +108,15 @@ def get_pupil_position(eye_points, facial_landmarks, frame, gray):
     x_ratio = 2.5 * (cx - min_x) / (max_x - min_x) - 1.25  # Daha geniş aralık
     y_ratio = 2.5 * (cy - min_y) / (max_y - min_y) - 1.25  # Daha geniş aralık
     
+    # Debug için konumu göster
+    cv2.putText(frame, f"X: {x_ratio:.2f}, Y: {y_ratio:.2f}", 
+                (cx, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+    
+    # Göz çerçevesi içindeki y pozisyonunu görsel olarak göster
+    mid_x = (min_x + max_x) // 2
+    y_pos = min_y + int((y_ratio + 1.25) / 2.5 * (max_y - min_y))
+    cv2.line(frame, (mid_x-10, y_pos), (mid_x+10, y_pos), (0, 0, 255), 2)
+    
     return x_ratio, y_ratio
 
 def move_mouse_smooth(target_x, target_y):
@@ -122,8 +131,8 @@ def main():
     cap = cv2.VideoCapture(0)
     
     # Kamera parametrelerini ayarla
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
     
     while True:
         ret, frame = cap.read()
@@ -170,24 +179,54 @@ def main():
             left_x, left_y = get_pupil_position(LEFT_EYE_POINTS, landmarks, frame, gray)
             right_x, right_y = get_pupil_position(RIGHT_EYE_POINTS, landmarks, frame, gray)
             
-            # Göz verisi geçerliyse fare konumunu hesapla
+            # Göz bebeği konumu ile göz açıklık oranını birleştirerek fare konumunu hesapla
             if left_x is not None and right_x is not None:
                 # İki gözün ortalaması
                 avg_x = (left_x + right_x) / 2
                 avg_y = (left_y + right_y) / 2
                 
                 # İki göz arasındaki farkı kullanarak ekstra yatay hareket ekle
-                # Sola-sağa bakarken gözler arasında bir fark oluşur, bunu kullanabiliriz
                 eye_diff = left_x - right_x  # Sol göz - sağ göz farkı
                 
-                # Eğer fark belirli bir eşikten büyükse, bu bir yana bakış olabilir
-                if abs(eye_diff) > 0.2:  # Bu eşik değeri ayarlanabilir
-                    # Farkı mevcut x pozisyona ekle (yön korunarak)
-                    avg_x = avg_x + eye_diff * 0.5  # Bu çarpan ayarlanabilir
+                if abs(eye_diff) > 0.2:
+                    avg_x = avg_x + eye_diff * 0.5
                 
-                # Ekran koordinatlarına çevir
-                target_x = SCREEN_WIDTH * (avg_x * 1.2 + 0.5)  # Hassasiyeti biraz artırdık
-                target_y = SCREEN_HEIGHT * (avg_y * 1.2 + 0.5)
+                # Y ekseni için özel işlem
+                # Y koordinat sistemini TERS çevirelim - yukarı bakmak ekranın üstü olsun
+                # -1 ile çarparak Y koordinat sistemini tersine çeviriyoruz
+                avg_y = -avg_y
+                
+                # Debug bilgisi
+                cv2.putText(frame, f"Raw Y: {avg_y:.2f}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                EAR_MIN = 0.01  # Minimum EAR değeri (göz tamamen kapalıyken)
+                EAR_MAX = 0.28
+                # Göz açıklık oranını Y pozisyonu için bir faktör olarak kullan
+                ear_normal = (avg_ear - EAR_MIN) / (EAR_MAX - EAR_MIN) - 0.8
+                ear_normal = max(0, min(1, ear_normal))
+                
+                # Göz açıklık değeri ve y pozisyonunu birleştir
+                # NOT: ear_normal değerini Y değerini AŞAĞI kaydırmak için kullanıyoruz
+                y_combined = (avg_y * 0.3) + ((1 - ear_normal) * 0.7)
+                
+                # Ekran koordinatlarına çevir - ölçeklendirme ve offset değerlerini değiştirdik
+                target_x = SCREEN_WIDTH * (avg_x * 1.2 + 0.5)
+
+                # Y ekseninde daha az ölçeklendirme ve daha düşük bir offset kullanıyoruz
+                y_offset = 0.3  # Ekranın ortasına yakın bir nokta
+                y_scale = 0.8  # Daha küçük bir ölçek - aşırı değerleri engellemek için
+
+                target_y = SCREEN_HEIGHT * (y_combined * y_scale + y_offset) - 300
+
+                # Debug: Y hedef değerini ve ekran yüksekliğini göster
+                cv2.putText(frame, f"Target Y: {target_y:.0f}/{SCREEN_HEIGHT}", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                
+                # Değerleri ekran sınırları içinde tut
+                target_x = max(0, min(SCREEN_WIDTH-1, target_x))
+                target_y = max(0, min(SCREEN_HEIGHT-1, target_y))
+                
+                # Debug bilgilerini göster
+                cv2.putText(frame, f"EAR Norm: {ear_normal:.2f}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"Y Comb: {y_combined:.2f}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
                 # Fare konumunu yumuşat
                 eye_position_history.append((target_x, target_y))
